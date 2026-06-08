@@ -302,6 +302,10 @@ function RouletteScreen({
   const [result, setResult] = useState('');
   const [autoStop, setAutoStop] = useState(true);
   const autoStopTimer = useRef<number | null>(null);
+  const stopCompleteTimer = useRef<number | null>(null);
+  const animationFrame = useRef<number | null>(null);
+  const lastFrameTime = useRef<number | null>(null);
+  const spinVelocity = useRef(0);
   const spinStateRef = useRef<SpinState>('idle');
   const rotationRef = useRef(0);
   const targetsRef = useRef<string[]>(targets);
@@ -312,6 +316,12 @@ function RouletteScreen({
     return () => {
       if (autoStopTimer.current) {
         window.clearTimeout(autoStopTimer.current);
+      }
+      if (stopCompleteTimer.current) {
+        window.clearTimeout(stopCompleteTimer.current);
+      }
+      if (animationFrame.current) {
+        window.cancelAnimationFrame(animationFrame.current);
       }
     };
   }, []);
@@ -328,27 +338,58 @@ function RouletteScreen({
     targetsRef.current = targets;
   }, [targets]);
 
+  const clearSpinAnimation = () => {
+    if (animationFrame.current) {
+      window.cancelAnimationFrame(animationFrame.current);
+      animationFrame.current = null;
+    }
+    lastFrameTime.current = null;
+  };
+
+  const spinFrame = (timestamp: number) => {
+    if (spinStateRef.current !== 'spinning') {
+      clearSpinAnimation();
+      return;
+    }
+
+    if (lastFrameTime.current === null) {
+      lastFrameTime.current = timestamp;
+    }
+
+    const elapsedSeconds = Math.min((timestamp - lastFrameTime.current) / 1000, 0.05);
+    lastFrameTime.current = timestamp;
+    const nextRotation = rotationRef.current + spinVelocity.current * elapsedSeconds;
+
+    rotationRef.current = nextRotation;
+    setRotation(nextRotation);
+    animationFrame.current = window.requestAnimationFrame(spinFrame);
+  };
+
   const start = () => {
-    if (!canPlay || spinState !== 'idle') return;
+    if (!canPlay || spinStateRef.current !== 'idle') return;
 
     if (autoStopTimer.current) {
       window.clearTimeout(autoStopTimer.current);
+      autoStopTimer.current = null;
+    }
+    if (stopCompleteTimer.current) {
+      window.clearTimeout(stopCompleteTimer.current);
+      stopCompleteTimer.current = null;
     }
 
     resolvedDirection.current = settings.direction === 'random' ? (Math.random() > 0.5 ? 'clockwise' : 'counterclockwise') : settings.direction;
     resolvedSpeed.current = settings.speed === 'random' ? randomFrom(['slow', 'normal', 'fast', 'high']) : settings.speed;
 
     const directionSign = resolvedDirection.current === 'clockwise' ? 1 : -1;
-    const speedDegrees = { slow: 720, normal: 1080, fast: 1440, high: 1980 }[resolvedSpeed.current];
+    const speedDegreesPerSecond = { slow: 220, normal: 380, fast: 560, high: 820 }[resolvedSpeed.current];
+
+    clearSpinAnimation();
+    spinStateRef.current = 'spinning';
+    spinVelocity.current = directionSign * speedDegreesPerSecond;
     setResult('');
     setSpinState('spinning');
-    setTransition('transform 1ms linear');
-    setRotation((current) => current + directionSign * speedDegrees);
-
-    window.setTimeout(() => {
-      setTransition('transform 900ms linear');
-      setRotation((current) => current + directionSign * speedDegrees);
-    }, 20);
+    setTransition('none');
+    animationFrame.current = window.requestAnimationFrame(spinFrame);
 
     if (autoStop) {
       autoStopTimer.current = window.setTimeout(() => stop(), 1800 + Math.random() * 2400);
@@ -363,6 +404,7 @@ function RouletteScreen({
       autoStopTimer.current = null;
     }
 
+    clearSpinAnimation();
     const directionSign = resolvedDirection.current === 'clockwise' ? 1 : -1;
     const extraTurns = 2 + Math.floor(Math.random() * 3);
     const randomOffset = Math.random() * 360;
@@ -374,10 +416,11 @@ function RouletteScreen({
     setRotation(finalRotation);
     rotationRef.current = finalRotation;
 
-    window.setTimeout(() => {
+    stopCompleteTimer.current = window.setTimeout(() => {
       spinStateRef.current = 'idle';
       setSpinState('idle');
       setResult(getWinner(targetsRef.current, finalRotation));
+      stopCompleteTimer.current = null;
     }, 2650);
   };
 
